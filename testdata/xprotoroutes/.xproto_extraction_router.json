@@ -1,0 +1,13 @@
+{
+  "spex_name": "xproto.demo",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/ops/v1/ping"
+    },
+    {
+      "method": "POST",
+      "path": "/ops/v1/mission/list"
+    }
+  ]
+}

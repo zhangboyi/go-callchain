@@ -1,0 +1,10 @@
+openapi: 3.0.0
+paths:
+  /api/v1/items:
+    get:
+      operationId: listItems
+    post:
+      operationId: createItem
+  /api/v1/items/{id}:
+    delete:
+      operationId: deleteItem

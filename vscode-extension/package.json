@@ -1,0 +1,270 @@
+{
+  "name": "go-callchain-vscode",
+  "displayName": "Go Callchain",
+  "description": "Analyze Go interface callchains, function callchains, and MR impact through go-callchain-service.",
+  "version": "0.1.36",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:go",
+    "onView:goCallchain.interfaceCallchainView",
+    "onView:goCallchain.impactView",
+    "onView:goCallchain.functionCallchainView",
+    "onCommand:goCallchain.analyzeWorkspace",
+    "onCommand:goCallchain.selectAnalysisDirectory",
+    "onCommand:goCallchain.clearAnalysisDirectory",
+    "onCommand:goCallchain.analyzeLocalBranchImpact",
+    "onCommand:goCallchain.showInterfaceCallchain",
+    "onCommand:goCallchain.showFunctionCallchain",
+    "onCommand:goCallchain.showCallchainGraph",
+    "onCommand:goCallchain.showSelectedCallchainGraph",
+    "onCommand:goCallchain.moreInterfaceActions",
+    "onCommand:goCallchain.moreImpactActions",
+    "onCommand:goCallchain.moreFunctionActions",
+    "onCommand:goCallchain.restartService"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build:server": "mkdir -p bin/darwin-arm64 && GOOS=darwin GOARCH=arm64 go build -o bin/darwin-arm64/go-callchain-service ../cmd/server",
+    "compile": "tsc -p ./",
+    "test": "npm run compile && node --test test/*.test.js",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run build:server && npm run compile"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Go Callchain",
+      "properties": {
+        "goCallchain.serviceUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "Local go-callchain-service URL."
+        },
+        "goCallchain.autoStartService": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the local service when health check fails."
+        },
+        "goCallchain.serviceBinary": {
+          "type": "string",
+          "default": "",
+          "description": "Explicit go-callchain-service binary path. Empty means use bundled binary when available."
+        },
+        "goCallchain.serviceCommand": {
+          "type": "string",
+          "default": "go run ./cmd/server -addr 127.0.0.1:8787",
+          "description": "Fallback shell command used when serviceBinary and bundled binary are unavailable."
+        },
+        "goCallchain.serviceCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory used only by serviceCommand fallback."
+        },
+        "goCallchain.repositoryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Go repository directory to analyze. Relative paths are resolved from the VSCode workspace root. Empty means auto-detect go.mod."
+        },
+        "goCallchain.defaultBase": {
+          "type": "string",
+          "default": "master",
+          "description": "Default base branch or commit for local base...head analysis."
+        },
+        "goCallchain.defaultDepth": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Default callchain depth."
+        },
+        "goCallchain.mode": {
+          "type": "string",
+          "enum": [
+            "fast",
+            "accurate"
+          ],
+          "default": "fast",
+          "description": "Backend analysis mode."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "goCallchain.analyzeWorkspace",
+        "title": "分析工作区",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "goCallchain.selectAnalysisDirectory",
+        "title": "选择分析目录",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "goCallchain.clearAnalysisDirectory",
+        "title": "清除分析目录",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "goCallchain.analyzeLocalBranchImpact",
+        "title": "分析 MR Impact",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "goCallchain.showInterfaceCallchain",
+        "title": "查看接口调用链",
+        "icon": "$(symbol-interface)"
+      },
+      {
+        "command": "goCallchain.showFunctionCallchain",
+        "title": "查看调用链",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "goCallchain.showCallchainGraph",
+        "title": "查看 Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "goCallchain.showSelectedCallchainGraph",
+        "title": "查看 Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "goCallchain.restartService",
+        "title": "重启服务",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "goCallchain.refresh",
+        "title": "刷新",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "goCallchain.moreInterfaceActions",
+        "title": "接口更多操作",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "goCallchain.moreImpactActions",
+        "title": "MR 更多操作",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "goCallchain.moreFunctionActions",
+        "title": "函数更多操作",
+        "icon": "$(ellipsis)"
+      },
+      {
+        "command": "goCallchain.openFunction",
+        "title": "打开源码",
+        "icon": "$(go-to-file)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "goCallchain",
+          "title": "Code Analysis",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "goCallchain": [
+        {
+          "id": "goCallchain.interfaceCallchainView",
+          "name": "Interface Callchain"
+        },
+        {
+          "id": "goCallchain.impactView",
+          "name": "MR Impact"
+        },
+        {
+          "id": "goCallchain.functionCallchainView",
+          "name": "Function Callchain"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "goCallchain.analyzeWorkspace",
+          "when": "view == goCallchain.interfaceCallchainView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "goCallchain.showInterfaceCallchain",
+          "when": "view == goCallchain.interfaceCallchainView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "goCallchain.showCallchainGraph",
+          "when": "view == goCallchain.interfaceCallchainView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "goCallchain.analyzeLocalBranchImpact",
+          "when": "view == goCallchain.impactView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "goCallchain.analyzeWorkspace",
+          "when": "view == goCallchain.functionCallchainView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "goCallchain.showFunctionCallchain",
+          "when": "view == goCallchain.functionCallchainView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "goCallchain.showCallchainGraph",
+          "when": "view == goCallchain.functionCallchainView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "goCallchain.moreInterfaceActions",
+          "when": "view == goCallchain.interfaceCallchainView",
+          "group": "navigation@99"
+        },
+        {
+          "command": "goCallchain.moreImpactActions",
+          "when": "view == goCallchain.impactView",
+          "group": "navigation@99"
+        },
+        {
+          "command": "goCallchain.moreFunctionActions",
+          "when": "view == goCallchain.functionCallchainView",
+          "group": "navigation@99"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "goCallchain.showSelectedCallchainGraph",
+          "when": "viewItem =~ /goCallchain.function/",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "goCallchain.openFunction",
+          "when": "false"
+        },
+        {
+          "command": "goCallchain.showSelectedCallchainGraph",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.5"
+  }
+}
