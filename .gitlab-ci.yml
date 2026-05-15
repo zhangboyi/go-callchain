@@ -1,0 +1,51 @@
+stages:
+  - package
+
+variables:
+  GO_VERSION: "1.25.0"
+  GOOS: "darwin"
+  GOARCH: "arm64"
+  GOMODCACHE: "$CI_PROJECT_DIR/.cache/go/pkg/mod"
+  GOPATH: "$CI_PROJECT_DIR/.cache/go"
+  NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.cache/npm"
+
+cache:
+  key:
+    files:
+      - go.sum
+      - vscode-extension/package-lock.json
+  paths:
+    - .cache/go/pkg/mod/
+    - .cache/npm/
+
+package:vscode-extension:
+  stage: package
+  image: node:20-bookworm
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends ca-certificates curl tar
+    - curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz
+    - rm -rf /usr/local/go
+    - tar -C /usr/local -xzf /tmp/go.tgz
+    - export PATH="/usr/local/go/bin:$PATH"
+    - go version
+    - node --version
+    - npm --version
+  script:
+    - export PATH="/usr/local/go/bin:$PATH"
+    - cd vscode-extension
+    - npm ci
+    - npm run build:server
+    - npm test
+    - VERSION="$(node -p "require('./package.json').version")"
+    - npx --yes @vscode/vsce package --no-dependencies --out "go-callchain-vscode-${VERSION}.vsix"
+  artifacts:
+    name: "go-callchain-vscode-$CI_COMMIT_REF_SLUG"
+    when: always
+    expire_in: 30 days
+    paths:
+      - vscode-extension/*.vsix
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
