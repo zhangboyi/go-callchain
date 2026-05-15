@@ -175,6 +175,7 @@ type ImpactedInterface struct {
 }
 
 type MRImpactResponse struct {
+	TaskID             string              `json:"task_id,omitempty"`
 	ChangedFunctions   []ChangedFunction   `json:"changed_functions"`
 	ImpactedInterfaces []ImpactedInterface `json:"impacted_interfaces"`
 }

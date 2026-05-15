@@ -6,15 +6,16 @@ import {
   CodeOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  EditOutlined,
   EyeOutlined,
   FolderOpenOutlined,
   PlayCircleOutlined,
   SaveOutlined,
   SearchOutlined,
 } from '@ant-design/icons';
-import { Alert, Button, Descriptions, Drawer, Empty, Input, Layout, Popconfirm, Progress, Segmented, Space, Table, Tag, Typography, Select } from 'antd';
+import { Alert, AutoComplete, Button, Descriptions, Drawer, Empty, Input, Layout, Popconfirm, Progress, Segmented, Space, Table, Tag, Tooltip, Typography, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   analyze,
   deleteRepository,
@@ -37,8 +38,9 @@ import { CodeBrowser } from './components/CodeBrowser';
 import { DocsPage } from './components/DocsPage';
 import { ImpactPanel } from './components/ImpactPanel';
 import { ObjectRail } from './components/ObjectRail';
-import { chainToCallTree } from './graph/callchainGraph';
+import { chainsToCallTree } from './graph/callchainGraph';
 import { sourceFromSelection } from './repositorySource';
+import { createImpactRecordID, parseURLState, serializeURLState, type URLAppTab, type URLState } from './urlState';
 import type {
   CallTreeNode,
   AnalyzeMode,
@@ -50,6 +52,7 @@ import type {
   InterfaceCallchainResponse,
   ManagedRepository,
   MRImpactResponse,
+  RepoSource,
   RepositoryRef,
   Route,
   SourceType,
@@ -57,8 +60,9 @@ import type {
 } from './types';
 
 const defaultLocalPath = '/Users/boyi.zhang/Work/BizProjects/TCM/TCM-BE';
-type AppTab = 'callchain' | 'impact' | 'code' | 'docs';
+type AppTab = URLAppTab;
 type DetailTab = 'routes' | 'functions' | 'raw';
+const impactStoragePrefix = 'go-callchain-impact:';
 
 const workspaceTabs: Array<{ key: AppTab; label: string; icon: ReactNode }> = [
   { key: 'callchain', label: 'Call Chain', icon: <ApiOutlined /> },
@@ -74,6 +78,7 @@ const detailTabs: Array<{ key: DetailTab; label: string }> = [
 ];
 
 function App() {
+  const urlRestoredRef = useRef(false);
   const [sourceType, setSourceType] = useState<SourceType>('local');
   const [appTab, setAppTab] = useState<AppTab>('callchain');
   const [analyzeMode, setAnalyzeMode] = useState<AnalyzeMode>('fast');
@@ -87,7 +92,8 @@ function App() {
   const [repositoryDrawerOpen, setRepositoryDrawerOpen] = useState(false);
   const [repoNameInput, setRepoNameInput] = useState('');
   const [repoURLInput, setRepoURLInput] = useState('');
-  const [repoDefaultRefInput, setRepoDefaultRefInput] = useState('');
+  const [repoDefaultRefInput, setRepoDefaultRefInput] = useState('master');
+  const [editingRepositoryID, setEditingRepositoryID] = useState('');
   const [task, setTask] = useState<TaskStatusResponse | null>(null);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [functions, setFunctions] = useState<GoFunction[]>([]);
@@ -112,6 +118,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [impactLoading, setImpactLoading] = useState(false);
   const [repositoryLoading, setRepositoryLoading] = useState(false);
+  const [repositoriesLoaded, setRepositoriesLoaded] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -129,10 +136,25 @@ function App() {
       })),
     [repositoryRefs],
   );
+  const filterRefOption = (input: string, option?: { value: string; label: string }) => {
+    const keyword = input.toLowerCase();
+    return (option?.value.toLowerCase().includes(keyword) ?? false) || (option?.label.toLowerCase().includes(keyword) ?? false);
+  };
 
   useEffect(() => {
     void loadManagedRepositories();
   }, []);
+
+  useEffect(() => {
+    if (!repositoriesLoaded || urlRestoredRef.current) {
+      return;
+    }
+    urlRestoredRef.current = true;
+    const urlState = parseURLState(window.location.search);
+    if (urlState) {
+      void restoreURLState(urlState);
+    }
+  }, [repositoriesLoaded, repositories]);
 
   useEffect(() => {
     if (sourceType !== 'managed' || !selectedRepositoryID) {
@@ -140,13 +162,6 @@ function App() {
     }
     void loadRepositoryRefsFor(selectedRepositoryID);
   }, [sourceType, selectedRepositoryID]);
-
-  useEffect(() => {
-    if (!selectedRepository || managedRef) {
-      return;
-    }
-    setManagedRef(selectedRepository.default_ref ?? '');
-  }, [managedRef, selectedRepository]);
 
   const filteredFunctions = useMemo(() => {
     const keyword = functionFilter.trim().toLowerCase();
@@ -171,7 +186,18 @@ function App() {
 
   const repositoryColumns: ColumnsType<ManagedRepository> = [
     { title: 'Name', dataIndex: 'name', width: 160, ellipsis: true },
-    { title: 'Git URL', dataIndex: 'url', ellipsis: true, render: (value: string) => <Typography.Text code>{value}</Typography.Text> },
+    {
+      title: 'Git URL',
+      dataIndex: 'url',
+      ellipsis: true,
+      render: (value: string) => (
+        <Tooltip title={value} placement="topLeft">
+          <Typography.Text className="repo-url-text" code copyable={{ text: value }}>
+            {value}
+          </Typography.Text>
+        </Tooltip>
+      ),
+    },
     { title: 'Default', dataIndex: 'default_ref', width: 110, render: (value?: string) => value || '-' },
     { title: 'Sync', width: 180, render: (_, repo) => repo.last_sync_error ? <Tag color="red">failed</Tag> : repo.last_sync_at ? shortTime(repo.last_sync_at) : '-' },
     {
@@ -182,6 +208,7 @@ function App() {
           <Button size="small" onClick={() => useManagedRepository(repo)}>
             Use
           </Button>
+          <Button size="small" icon={<EditOutlined />} onClick={() => editManagedRepository(repo)} />
           <Button size="small" icon={<CloudSyncOutlined />} loading={syncLoading && selectedRepositoryID === repo.id} onClick={() => { void syncManagedRepository(repo.id); }} />
           <Popconfirm title="Delete repository" okText="Delete" cancelText="Cancel" onConfirm={() => { void removeManagedRepository(repo.id); }}>
             <Button size="small" danger icon={<DeleteOutlined />} />
@@ -190,6 +217,92 @@ function App() {
       ),
     },
   ];
+
+  function currentURLState(overrides: URLState = {}): URLState {
+    return {
+      tab: appTab,
+      sourceType,
+      mode: analyzeMode,
+      localPath,
+      gitURL,
+      gitRef,
+      repositoryID: selectedRepositoryID,
+      managedRef,
+      ...overrides,
+    };
+  }
+
+  function replaceURLState(nextState: URLState) {
+    const query = serializeURLState(nextState);
+    const nextURL = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+    window.history.replaceState(null, '', nextURL);
+  }
+
+  function applyURLState(urlState: URLState) {
+    if (urlState.tab) {
+      setAppTab(urlState.tab);
+    }
+    if (urlState.mode) {
+      setAnalyzeMode(urlState.mode);
+    }
+    if (urlState.sourceType) {
+      setSourceType(urlState.sourceType);
+    }
+    if (urlState.localPath !== undefined) {
+      setLocalPath(urlState.localPath);
+    }
+    if (urlState.gitURL !== undefined) {
+      setGitURL(urlState.gitURL);
+    }
+    if (urlState.gitRef !== undefined) {
+      setGitRef(urlState.gitRef);
+    }
+    if (urlState.repositoryID !== undefined) {
+      setSelectedRepositoryID(urlState.repositoryID);
+    }
+    if (urlState.managedRef !== undefined) {
+      setManagedRef(urlState.managedRef);
+    }
+    if (urlState.impactBase !== undefined) {
+      setImpactBase(urlState.impactBase);
+    }
+    if (urlState.impactHead !== undefined) {
+      setImpactHead(urlState.impactHead);
+    }
+  }
+
+  function sourceFromURLState(urlState: URLState): RepoSource {
+    const nextSourceType = urlState.sourceType ?? sourceType;
+    if (nextSourceType === 'local') {
+      return { type: 'local', path: urlState.localPath ?? localPath };
+    }
+    if (nextSourceType === 'git') {
+      return { type: 'git', url: urlState.gitURL ?? gitURL, ref: urlState.gitRef ?? gitRef };
+    }
+
+    const repoID = urlState.repositoryID ?? selectedRepositoryID;
+    const repo = repositories.find((item) => item.id === repoID) ?? selectedRepository;
+    if (!repo) {
+      throw new Error('URL 中的受管仓库不存在');
+    }
+    return sourceFromSelection('managed', localPath, gitURL, gitRef, repo, urlState.managedRef ?? managedRef);
+  }
+
+  async function restoreURLState(urlState: URLState) {
+    applyURLState(urlState);
+    try {
+      const nextSource = sourceFromURLState(urlState);
+      const nextMode = urlState.mode ?? analyzeMode;
+      if (urlState.taskID) {
+        await restoreAnalysisFromURL(urlState, nextSource, nextMode);
+      }
+      if (urlState.tab === 'impact' && urlState.impactBase && urlState.impactHead) {
+        await restoreImpactFromURL(urlState, nextSource, nextMode);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
 
   async function loadManagedRepositories() {
     try {
@@ -201,6 +314,8 @@ function App() {
       }
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setRepositoriesLoaded(true);
     }
   }
 
@@ -219,17 +334,16 @@ function App() {
     setError('');
     try {
       const repo = await saveRepository({
-        name: repoNameInput,
+        id: editingRepositoryID || undefined,
+        name: repoNameInput.trim() || repositoryNameFromURL(repoURLInput),
         url: repoURLInput,
-        default_ref: repoDefaultRefInput,
+        default_ref: repoDefaultRefInput.trim() || 'master',
       });
       setRepositories((items) => upsertRepository(items, repo));
       setSelectedRepositoryID(repo.id);
       setManagedRef(repo.default_ref ?? '');
       setSourceType('managed');
-      setRepoNameInput('');
-      setRepoURLInput('');
-      setRepoDefaultRefInput('');
+      resetRepositoryForm();
       void loadRepositoryRefsFor(repo.id);
     } catch (err) {
       setError(errorMessage(err));
@@ -258,6 +372,31 @@ function App() {
     setSelectedRepositoryID(repo.id);
     setManagedRef(repo.default_ref ?? '');
     setRepositoryDrawerOpen(false);
+  }
+
+  function editManagedRepository(repo: ManagedRepository) {
+    setEditingRepositoryID(repo.id);
+    setRepoNameInput(repo.name);
+    setRepoURLInput(repo.url);
+    setRepoDefaultRefInput(repo.default_ref || 'master');
+  }
+
+  function resetRepositoryForm() {
+    setEditingRepositoryID('');
+    setRepoNameInput('');
+    setRepoURLInput('');
+    setRepoDefaultRefInput('master');
+  }
+
+  function updateRepositoryURLInput(value: string) {
+    setRepoURLInput(value);
+    setRepoNameInput((current) => {
+      const previousName = repositoryNameFromURL(repoURLInput);
+      if (current.trim() && current !== previousName) {
+        return current;
+      }
+      return repositoryNameFromURL(value);
+    });
   }
 
   function selectManagedRepository(repoID: string) {
@@ -297,13 +436,7 @@ function App() {
     }
   }
 
-  async function startAnalyze(force = false) {
-    if (sourceType === 'managed' && !selectedRepository) {
-      setError('请选择已配置 Git 仓库');
-      return;
-    }
-    setLoading(true);
-    setError('');
+  function resetAnalysisState() {
     setRoutes([]);
     setFunctions([]);
     setFileTree(null);
@@ -315,21 +448,58 @@ function App() {
     setSelectedImpactedInterface(null);
     setFunctionDetail(null);
     setCallchainDrawerOpen(false);
+  }
+
+  async function hydrateAnalysisTask(taskID: string) {
+    const finalTask = await pollTask(taskID);
+    setTask(finalTask);
+    const [nextRoutes, nextFunctions, nextFileTree] = await Promise.all([
+      getRoutes(taskID),
+      getFunctions(taskID),
+      getFileTree(taskID),
+    ]);
+    setRoutes(nextRoutes);
+    setFunctions(nextFunctions);
+    setFileTree(nextFileTree);
+    if (nextRoutes.length > 0) {
+      await selectRoute(taskID, nextRoutes[0]);
+    }
+  }
+
+  async function restoreAnalysisFromURL(urlState: URLState, nextSource: RepoSource, nextMode: AnalyzeMode) {
+    setLoading(true);
+    setError('');
+    resetAnalysisState();
+    try {
+      await hydrateAnalysisTask(urlState.taskID ?? '');
+    } catch (err) {
+      const started = await analyze(nextSource, false, nextMode);
+      await hydrateAnalysisTask(started.task_id);
+      replaceURLState({
+        ...currentURLState(),
+        ...urlState,
+        tab: urlState.tab ?? 'callchain',
+        sourceType: urlState.sourceType ?? sourceType,
+        mode: nextMode,
+        taskID: started.task_id,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startAnalyze(force = false) {
+    if (sourceType === 'managed' && !selectedRepository) {
+      setError('请选择已配置 Git 仓库');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    resetAnalysisState();
     try {
       const started = await analyze(source, force, analyzeMode);
-      const finalTask = await pollTask(started.task_id);
-      setTask(finalTask);
-      const [nextRoutes, nextFunctions, nextFileTree] = await Promise.all([
-        getRoutes(started.task_id),
-        getFunctions(started.task_id),
-        getFileTree(started.task_id),
-      ]);
-      setRoutes(nextRoutes);
-      setFunctions(nextFunctions);
-      setFileTree(nextFileTree);
-      if (nextRoutes.length > 0) {
-        await selectRoute(started.task_id, nextRoutes[0]);
-      }
+      await hydrateAnalysisTask(started.task_id);
+      replaceURLState(currentURLState({ tab: 'callchain', taskID: started.task_id }));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -392,23 +562,58 @@ function App() {
     }
   }
 
-  async function openFunctionDetail(functionID: string) {
-    if (!task?.task_id) {
+  async function openFunctionDetail(functionID: string, options: { preserveCallchain?: boolean; taskID?: string } = {}) {
+    const detailTaskID = options.taskID || task?.task_id;
+    if (!detailTaskID) {
       return;
     }
     try {
-      const detail = await getFunctionDetail(task.task_id, functionID);
+      const detail = await getFunctionDetail(detailTaskID, functionID);
       setFunctionDetail(detail);
       setFunctionInput(functionID);
-      const content = await getFileContent(task.task_id, detail.function.file).catch(() => null);
+      const content = await getFileContent(detailTaskID, detail.function.file).catch(() => null);
       if (content) {
         setFileContent(content);
         setSelectedFilePath(content.path);
       }
       setFunctionDrawerOpen(true);
-      setRawPayload(detail);
+      if (!options.preserveCallchain) {
+        setRawPayload(detail);
+      }
     } catch (err) {
       setError(errorMessage(err));
+    }
+  }
+
+  async function restoreImpactFromURL(urlState: URLState, nextSource: RepoSource, nextMode: AnalyzeMode) {
+    setImpactLoading(true);
+    setError('');
+    try {
+      const storedImpact = urlState.impactRecordID ? readImpactRecord(urlState.impactRecordID) : null;
+      if (storedImpact) {
+        applyImpactResult(storedImpact);
+        return;
+      }
+
+      const base = urlState.impactBase ?? impactBase;
+      const head = urlState.impactHead ?? impactHead;
+      const nextImpact = await getMRImpact(nextSource, base, head, nextMode);
+      const nextURLState = {
+        ...currentURLState(),
+        ...urlState,
+        tab: 'impact' as const,
+        mode: nextMode,
+        impactBase: base,
+        impactHead: head,
+      };
+      const impactRecordID = urlState.impactRecordID ?? createImpactRecordID(nextURLState);
+      writeImpactRecord(impactRecordID, nextImpact);
+      applyImpactResult(nextImpact);
+      replaceURLState({ ...nextURLState, impactRecordID });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setImpactLoading(false);
     }
   }
 
@@ -417,14 +622,11 @@ function App() {
     setError('');
     try {
       const nextImpact = await getMRImpact(source, impactBase, impactHead, analyzeMode);
-      setImpact(nextImpact);
-      const firstImpact = nextImpact.impacted_interfaces?.[0];
-      if (firstImpact) {
-        selectImpactedInterface(firstImpact, false);
-      } else {
-        setSelectedImpactedInterface(null);
-      }
-      setRawPayload(nextImpact);
+      const nextURLState = currentURLState({ tab: 'impact', impactBase, impactHead });
+      const impactRecordID = createImpactRecordID(nextURLState);
+      writeImpactRecord(impactRecordID, nextImpact);
+      applyImpactResult(nextImpact);
+      replaceURLState({ ...nextURLState, impactRecordID });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -432,10 +634,30 @@ function App() {
     }
   }
 
+  function applyImpactResult(nextImpact: MRImpactResponse) {
+    setImpact(nextImpact);
+    const firstImpact = nextImpact.impacted_interfaces?.[0];
+    if (firstImpact) {
+      selectImpactedInterfaceFromImpact(firstImpact, nextImpact, false);
+    } else {
+      setSelectedImpactedInterface(null);
+      setCallchain(null);
+    }
+    setRawPayload(nextImpact);
+  }
+
   function selectImpactedInterface(row: ImpactedInterface, openDrawer = true) {
+    selectImpactedInterfaceFromImpact(row, impact, openDrawer);
+  }
+
+  function selectImpactedInterfaceFromImpact(row: ImpactedInterface, sourceImpact: MRImpactResponse | null, openDrawer = true) {
     setSelectedImpactedInterface(row);
     setSelectedRoute(null);
-    setCallchain({ function: row.changed_function, tree: chainToCallTree(row.chain) });
+    setFunctionDetail(null);
+    const routeChains = (sourceImpact?.impacted_interfaces ?? [])
+      .filter((item) => item.method === row.method && item.path === row.path && item.handler === row.handler && item.chain.length > 0)
+      .map((item) => item.chain);
+    setCallchain({ function: row.changed_function, tree: chainsToCallTree(routeChains.length > 0 ? routeChains : [row.chain]) });
     setFunctionInput(row.changed_function);
     setRawPayload(row);
     setCallchainDrawerOpen(openDrawer);
@@ -502,12 +724,12 @@ function App() {
         {sourceType === 'local' ? (
           <Input value={localPath} onChange={(event) => setLocalPath(event.target.value)} />
         ) : sourceType === 'git' ? (
-          <Space.Compact className="full-width">
+          <Space.Compact className="source-input-group">
             <Input value={gitURL} onChange={(event) => setGitURL(event.target.value)} placeholder="Git URL" />
             <Input className="ref-input" value={gitRef} onChange={(event) => setGitRef(event.target.value)} placeholder="HEAD" />
           </Space.Compact>
         ) : (
-          <Space.Compact className="full-width">
+          <Space.Compact className="source-input-group">
             <Select
               className="repo-select"
               value={selectedRepositoryID || undefined}
@@ -517,19 +739,16 @@ function App() {
               onChange={selectManagedRepository}
               options={repositories.map((repo) => ({ value: repo.id, label: repo.name }))}
             />
-            <Input
+            <AutoComplete
               className="ref-input"
-              list="repository-ref-options"
+              options={repositoryRefOptions}
               value={managedRef}
-              onChange={(event) => setManagedRef(event.target.value)}
+              onChange={setManagedRef}
               placeholder={selectedRepository?.default_ref || 'branch / tag / commit'}
+              showSearch
+              filterOption={filterRefOption}
             />
             <Button icon={<CloudSyncOutlined />} loading={syncLoading} disabled={!selectedRepositoryID} onClick={() => { void syncManagedRepository(); }} />
-            <datalist id="repository-ref-options">
-              {repositoryRefOptions.map((option) => (
-                <option value={option.value} label={option.label} key={option.value} />
-              ))}
-            </datalist>
           </Space.Compact>
         )}
         <Button icon={<FolderOpenOutlined />} onClick={() => setRepositoryDrawerOpen(true)}>
@@ -608,11 +827,27 @@ function App() {
               <Space direction="vertical" size={12} className="full-width">
                 <div>
                   <Typography.Text strong>Base</Typography.Text>
-                  <Input value={impactBase} onChange={(event) => setImpactBase(event.target.value)} placeholder="master / main" />
+                  <AutoComplete
+                    className="full-width"
+                    options={repositoryRefOptions}
+                    value={impactBase}
+                    onChange={setImpactBase}
+                    placeholder="master / main"
+                    showSearch
+                    filterOption={filterRefOption}
+                  />
                 </div>
                 <div>
                   <Typography.Text strong>Head</Typography.Text>
-                  <Input value={impactHead} onChange={(event) => setImpactHead(event.target.value)} placeholder="feature / HEAD" />
+                  <AutoComplete
+                    className="full-width"
+                    options={repositoryRefOptions}
+                    value={impactHead}
+                    onChange={setImpactHead}
+                    placeholder="feature / HEAD"
+                    showSearch
+                    filterOption={filterRefOption}
+                  />
                 </div>
                 <Button type="primary" block loading={impactLoading} onClick={runImpact}>
                   Analyze Impact
@@ -638,11 +873,14 @@ function App() {
             selectedRoute={selectedRoute}
             selectedFunction={functionInput}
             functions={functions}
-            functionDetail={functionDetail}
+            functionDetail={selectedImpactedInterface ? null : functionDetail}
             impactedInterface={selectedImpactedInterface}
             changedFunctionIDs={changedFunctionIDs}
             onSelectFunction={(functionID) => {
-              void openFunctionDetail(functionID);
+              void openFunctionDetail(functionID, {
+                preserveCallchain: Boolean(selectedImpactedInterface),
+                taskID: selectedImpactedInterface ? impact?.task_id : undefined,
+              });
             }}
           />
         )}
@@ -825,11 +1063,16 @@ function App() {
         <Space direction="vertical" size={16} className="full-width">
           <div className="repo-form">
             <Input value={repoNameInput} onChange={(event) => setRepoNameInput(event.target.value)} placeholder="Name" />
-            <Input value={repoURLInput} onChange={(event) => setRepoURLInput(event.target.value)} placeholder="Git URL" />
+            <Input value={repoURLInput} onChange={(event) => updateRepositoryURLInput(event.target.value)} placeholder="Git URL" />
             <Input value={repoDefaultRefInput} onChange={(event) => setRepoDefaultRefInput(event.target.value)} placeholder="Default branch" />
             <Button type="primary" icon={<SaveOutlined />} loading={repositoryLoading} onClick={() => { void saveManagedRepository(); }}>
               Save
             </Button>
+            {editingRepositoryID && (
+              <Button onClick={resetRepositoryForm}>
+                Cancel
+              </Button>
+            )}
           </div>
           <Table<ManagedRepository>
             rowKey={(repo) => repo.id}
@@ -847,6 +1090,7 @@ function App() {
         title="Call Chain"
         width="calc(100vw - 64px)"
         open={callchainDrawerOpen}
+        zIndex={1100}
         onClose={() => setCallchainDrawerOpen(false)}
         destroyOnClose
       >
@@ -855,16 +1099,19 @@ function App() {
           selectedRoute={selectedRoute}
           selectedFunction={functionInput}
           functions={functions}
-          functionDetail={functionDetail}
+          functionDetail={selectedImpactedInterface ? null : functionDetail}
           impactedInterface={selectedImpactedInterface}
           changedFunctionIDs={changedFunctionIDs}
           onSelectFunction={(functionID) => {
-            void openFunctionDetail(functionID);
+            void openFunctionDetail(functionID, {
+              preserveCallchain: Boolean(selectedImpactedInterface),
+              taskID: selectedImpactedInterface ? impact?.task_id : undefined,
+            });
           }}
         />
       </Drawer>
 
-      <Drawer title="Function Detail" width={760} open={functionDrawerOpen} onClose={() => setFunctionDrawerOpen(false)}>
+      <Drawer title="Function Detail" width={760} open={functionDrawerOpen} zIndex={1400} onClose={() => setFunctionDrawerOpen(false)}>
         {functionDetail && (
           <Space direction="vertical" size={14} className="full-width">
             <Descriptions size="small" column={1}>
@@ -887,6 +1134,30 @@ function App() {
   );
 }
 
+function writeImpactRecord(recordID: string, impact: MRImpactResponse) {
+  try {
+    window.localStorage.setItem(`${impactStoragePrefix}${recordID}`, JSON.stringify(impact));
+  } catch {
+    // URL 参数仍可触发自动恢复，localStorage 写入失败不阻塞主流程。
+  }
+}
+
+function readImpactRecord(recordID: string): MRImpactResponse | null {
+  try {
+    const raw = window.localStorage.getItem(`${impactStoragePrefix}${recordID}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as MRImpactResponse;
+    if (!Array.isArray(parsed.changed_functions) || !Array.isArray(parsed.impacted_interfaces)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function shortCommit(value?: string): string {
   if (!value) {
     return '-';
@@ -907,6 +1178,14 @@ function upsertRepository(items: ManagedRepository[], next: ManagedRepository): 
     ? items.map((repo) => (repo.id === next.id ? next : repo))
     : [...items, next];
   return [...merged].sort((left, right) => left.name.localeCompare(right.name) || left.url.localeCompare(right.url));
+}
+
+function repositoryNameFromURL(url: string): string {
+  const normalized = url.trim().replace(/\/+$/, '').replace(/\.git$/, '');
+  const lastSlash = normalized.lastIndexOf('/');
+  const pathName = lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+  const lastColon = pathName.lastIndexOf(':');
+  return lastColon >= 0 ? pathName.slice(lastColon + 1) : pathName;
 }
 
 function withEdgeKeys(edges: FunctionDetail['incoming_edges']) {

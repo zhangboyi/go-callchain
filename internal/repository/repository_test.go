@@ -106,6 +106,65 @@ func TestResolveGitRepairsCachedBareRepoWithoutHeads(t *testing.T) {
 	}
 }
 
+func TestSaveRepositoryCreatesDistinctEntriesForSameURL(t *testing.T) {
+	manager := repository.NewManager(t.TempDir())
+	first, err := manager.SaveRepository(model.SaveRepositoryRequest{URL: "git@git.example.com:team/service.git"})
+	if err != nil {
+		t.Fatalf("SaveRepository() first error = %v", err)
+	}
+	second, err := manager.SaveRepository(model.SaveRepositoryRequest{URL: "git@git.example.com:team/service.git", DefaultRef: "feature"})
+	if err != nil {
+		t.Fatalf("SaveRepository() second error = %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("same URL created duplicate id: %s", first.ID)
+	}
+	if first.Name != "service" || first.DefaultRef != "master" {
+		t.Fatalf("unexpected inferred first repo: %#v", first)
+	}
+	if second.Name != "service" || second.DefaultRef != "feature" {
+		t.Fatalf("unexpected inferred second repo: %#v", second)
+	}
+	repos, err := manager.ListRepositories()
+	if err != nil {
+		t.Fatalf("ListRepositories() error = %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("repositories len = %d, want 2: %#v", len(repos), repos)
+	}
+}
+
+func TestSaveRepositoryUpdatesByExplicitID(t *testing.T) {
+	manager := repository.NewManager(t.TempDir())
+	repo, err := manager.SaveRepository(model.SaveRepositoryRequest{
+		Name:       "service",
+		URL:        "git@git.example.com:team/service.git",
+		DefaultRef: "master",
+	})
+	if err != nil {
+		t.Fatalf("SaveRepository() create error = %v", err)
+	}
+	updated, err := manager.SaveRepository(model.SaveRepositoryRequest{
+		ID:         repo.ID,
+		Name:       "service-api",
+		URL:        "git@git.example.com:team/service-api.git",
+		DefaultRef: "main",
+	})
+	if err != nil {
+		t.Fatalf("SaveRepository() update error = %v", err)
+	}
+	if updated.ID != repo.ID || updated.Name != "service-api" || updated.DefaultRef != "main" {
+		t.Fatalf("unexpected updated repo: %#v", updated)
+	}
+	repos, err := manager.ListRepositories()
+	if err != nil {
+		t.Fatalf("ListRepositories() error = %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("repositories len = %d, want 1: %#v", len(repos), repos)
+	}
+}
+
 func TestResolveLocalRefFindsRemoteBranchWithSlash(t *testing.T) {
 	repo := t.TempDir()
 	writeRepoFile(t, repo, "go.mod", "module slashbranch\n\ngo 1.25\n")

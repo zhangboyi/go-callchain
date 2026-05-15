@@ -71,7 +71,7 @@ function appendOneHopEdges(
   functionsByID = new Map<string, GoFunction>(),
   changedFunctionIDs = new Set<string>(),
 ) {
-  if (!detail || !selectedFunction) {
+  if (!detail || !selectedFunction || detail.function.id !== selectedFunction) {
     return;
   }
 
@@ -126,6 +126,30 @@ export function chainToCallTree(chain: string[]): CallTreeNode {
     function: first ?? '',
     children: rest.length > 0 ? [chainToCallTree(rest)] : [],
   };
+}
+
+export function chainsToCallTree(chains: string[][]): CallTreeNode {
+  const rootChain = chains.find((chain) => chain.length > 0) ?? [];
+  const root = chainToCallTree(rootChain.slice(0, 1));
+  for (const chain of chains) {
+    appendChain(root, chain.slice(1));
+  }
+  return root;
+}
+
+function appendChain(node: CallTreeNode, chain: string[]) {
+  const [next, ...rest] = chain;
+  if (!next) {
+    return;
+  }
+  const children = node.children ?? [];
+  let child = children.find((item) => item.function === next);
+  if (!child) {
+    child = { function: next, children: [] };
+    children.push(child);
+    node.children = children;
+  }
+  appendChain(child, rest);
 }
 
 export function classifyNode(

@@ -136,6 +136,7 @@ export interface ImpactedInterface {
 }
 
 export interface MRImpactResponse {
+  task_id?: string;
   changed_functions: ChangedFunction[];
   impacted_interfaces: ImpactedInterface[];
 }

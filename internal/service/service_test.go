@@ -34,3 +34,31 @@ func TestAppendUniqueImpactKeepsOneRowPerInterfaceAndChangedFunction(t *testing.
 		t.Fatalf("chain length = %d", got)
 	}
 }
+
+func TestResolveFunctionAcceptsSuffixID(t *testing.T) {
+	functions := []model.Function{
+		{
+			ID:   "git.garena.com/shopee/seller-server/seller-governance/brand_ip_protection/internal/controller.(APIOrgController).GetAccessReviewBanner",
+			Name: "GetAccessReviewBanner",
+		},
+	}
+
+	got, err := resolveFunction(functions, "seller-governance/brand_ip_protection/internal/controller.(APIOrgController).GetAccessReviewBanner")
+	if err != nil {
+		t.Fatalf("resolve function: %v", err)
+	}
+	if got.ID != functions[0].ID {
+		t.Fatalf("resolved id = %s", got.ID)
+	}
+}
+
+func TestResolveFunctionRejectsAmbiguousSuffixID(t *testing.T) {
+	functions := []model.Function{
+		{ID: "repo/a/service.(Service).Run"},
+		{ID: "repo/b/service.(Service).Run"},
+	}
+
+	if _, err := resolveFunction(functions, "service.(Service).Run"); err == nil {
+		t.Fatal("expected ambiguous function error")
+	}
+}

@@ -171,11 +171,12 @@ func (m *Manager) FunctionCallchain(req model.FunctionCallchainRequest) (*Functi
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := functionByID(task.Result.Functions, req.Function); !ok {
-		return nil, fmt.Errorf("function not found: %s", req.Function)
+	function, err := resolveFunction(task.Result.Functions, req.Function)
+	if err != nil {
+		return nil, err
 	}
-	tree := graph.BuildCallTree(task.Result, req.Function, capDepth(req.Depth))
-	return &FunctionCallchain{Function: req.Function, Tree: tree}, nil
+	tree := graph.BuildCallTree(task.Result, function.ID, capDepth(req.Depth))
+	return &FunctionCallchain{Function: function.ID, Tree: tree}, nil
 }
 
 func (m *Manager) Functions(taskID string) ([]model.Function, error) {
@@ -191,20 +192,21 @@ func (m *Manager) FunctionDetail(taskID string, id string) (*model.FunctionDetai
 	if err != nil {
 		return nil, err
 	}
-	function, ok := functionByID(task.Result.Functions, id)
-	if !ok {
-		return nil, fmt.Errorf("function not found: %s", id)
+	function, err := resolveFunction(task.Result.Functions, id)
+	if err != nil {
+		return nil, err
 	}
+	resolvedID := function.ID
 	detail := &model.FunctionDetail{
 		Function:      function,
 		IncomingEdges: []model.Edge{},
 		OutgoingEdges: []model.Edge{},
 	}
 	for _, edge := range task.Result.Edges {
-		if edge.Callee == id {
+		if edge.Callee == resolvedID {
 			detail.IncomingEdges = append(detail.IncomingEdges, edge)
 		}
-		if edge.Caller == id {
+		if edge.Caller == resolvedID {
 			detail.OutgoingEdges = append(detail.OutgoingEdges, edge)
 		}
 	}
@@ -265,13 +267,34 @@ func (m *Manager) MRImpact(ctx context.Context, req model.MRImpactRequest) (*mod
 	if err != nil {
 		return nil, err
 	}
+	result.Source = workspace.Source
+	result.Workspace = workspace.Path
+	result.Commit = workspace.Commit
+	result.Mode = mode
 	changes, err := gitdiff.Diff(workspace.Path, req.Base, req.Head)
 	if err != nil {
 		return nil, err
 	}
+	taskID := newTaskID(workspace.Source)
+	now := time.Now()
+	m.mu.Lock()
+	m.tasks[taskID] = &Task{
+		ID:         taskID,
+		Status:     StatusDone,
+		Phase:      "done",
+		Progress:   100,
+		Mode:       mode,
+		Workspace:  workspace.Path,
+		Commit:     workspace.Commit,
+		StartedAt:  now,
+		FinishedAt: now,
+		Result:     result,
+	}
+	m.mu.Unlock()
 	changedFunctions := gitdiff.ChangedFunctions(changes, result.Functions)
 	targets := make([]string, 0, len(changedFunctions))
 	response := &model.MRImpactResponse{
+		TaskID:             taskID,
 		ChangedFunctions:   []model.ChangedFunction{},
 		ImpactedInterfaces: []model.ImpactedInterface{},
 	}
@@ -667,6 +690,38 @@ func functionByID(functions []model.Function, id string) (model.Function, bool) 
 		}
 	}
 	return model.Function{}, false
+}
+
+func resolveFunction(functions []model.Function, id string) (model.Function, error) {
+	if function, ok := functionByID(functions, id); ok {
+		return function, nil
+	}
+
+	var matched []model.Function
+	for _, function := range functions {
+		if sameFunctionID(function.ID, id) {
+			matched = append(matched, function)
+		}
+	}
+	if len(matched) == 1 {
+		return matched[0], nil
+	}
+	if len(matched) > 1 {
+		return model.Function{}, fmt.Errorf("ambiguous function id: %s", id)
+	}
+	return model.Function{}, fmt.Errorf("function not found: %s", id)
+}
+
+func sameFunctionID(fullID string, candidate string) bool {
+	fullID = strings.TrimPrefix(strings.TrimSpace(fullID), "/")
+	candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "/")
+	if fullID == "" || candidate == "" {
+		return false
+	}
+	if fullID == candidate {
+		return true
+	}
+	return strings.HasSuffix(fullID, "/"+candidate) || strings.HasSuffix(candidate, "/"+fullID)
 }
 
 func capDepth(depth int) int {

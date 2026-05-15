@@ -1,4 +1,4 @@
-export const vscodeExtensionDownloadURL = '/api/v1/downloads/vscode-extension';
+export const vscodeExtensionDownloadURL = 'https://git.garena.com/boyi.zhang/go-callchain/-/jobs/63068869/artifacts/file/vscode-extension/go-callchain-vscode-0.1.36.vsix';
 
 export interface DocsFeature {
   title: string;

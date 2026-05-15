@@ -235,6 +235,19 @@ func TestMRImpactAPI(t *testing.T) {
 	if !bytes.Contains(rec.Body.Bytes(), []byte("/tcm/api/v1/testcase_plans")) {
 		t.Fatalf("impact missing route: %s", rec.Body.String())
 	}
+	var impactResp model.MRImpactResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &impactResp); err != nil {
+		t.Fatalf("decode impact response: %v", err)
+	}
+	if impactResp.TaskID == "" {
+		t.Fatalf("impact task id is empty: %s", rec.Body.String())
+	}
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/functions/detail?task_id="+impactResp.TaskID+"&id="+impactResp.ChangedFunctions[0].ID, nil)
+	detailRec := httptest.NewRecorder()
+	router.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("impact function detail status = %d, body = %s", detailRec.Code, detailRec.Body.String())
+	}
 }
 
 func TestMRImpactLocalSourceAnalyzesHeadRef(t *testing.T) {

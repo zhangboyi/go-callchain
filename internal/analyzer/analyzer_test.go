@@ -144,6 +144,34 @@ func TestAnalyzerBuildsPackageVarReceiverCallEdges(t *testing.T) {
 	}
 }
 
+func TestAnalyzerBuildsCallbackMethodValueEdges(t *testing.T) {
+	repoPath := filepath.Join("..", "..", "testdata", "callbackservice")
+
+	result, err := analyzer.New().Analyze(context.Background(), repoPath)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	handler := "callbackservice/controller.(CaseController).Download"
+	assertRouteHandler(t, result.Routes, "POST", "/case/download", handler)
+
+	tree := graph.BuildCallTree(result, handler, 8)
+	if !treeContains(tree, "callbackservice/controller.(CaseServiceImpl).Download") {
+		t.Fatalf("call tree missing callback service method: %#v", tree)
+	}
+	if !treeContains(tree, "callbackservice/controller.save") {
+		t.Fatalf("call tree missing callback service child call: %#v", tree)
+	}
+
+	edge := edgeByCallerCallee(result.Edges, handler, "callbackservice/controller.(CaseServiceImpl).Download")
+	if edge == nil {
+		t.Fatalf("missing callback method value edge")
+	}
+	if edge.Source != "interface_method_inference" {
+		t.Fatalf("edge source = %q, want interface_method_inference", edge.Source)
+	}
+}
+
 func TestAnalyzerBuildsSwaggerCommentRoutes(t *testing.T) {
 	repoPath := filepath.Join("..", "..", "testdata", "commentroutes")
 

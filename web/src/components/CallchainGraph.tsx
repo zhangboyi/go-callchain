@@ -15,7 +15,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from '@dagrejs/dagre';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { edgeTypeMeta } from '../graph/edgeTypes';
 import type { CallchainGraphEdgeData, CallchainGraphModel, CallchainGraphNodeData } from '../graph/types';
 
@@ -32,7 +32,7 @@ interface CallchainGraphNodeDataWithControls extends CallchainGraphNodeData {
   collapsed?: boolean;
   collapsible?: boolean;
   onToggleCollapse?: (nodeID: string) => void;
-  onManualDragStart?: (nodeID: string, clientX: number, clientY: number) => void;
+  onSelectFunction?: (functionID: string) => void;
 }
 
 type CallchainFlowNode = FlowNode<CallchainGraphNodeDataWithControls, 'callchain'>;
@@ -41,12 +41,12 @@ const nodeTypes: NodeTypes = { callchain: GraphNode };
 export function CallchainGraph({ model, className, onSelectFunction }: CallchainGraphProps) {
   const [collapsedIDs, setCollapsedIDs] = useState<Set<string>>(() => new Set());
   const [visibleNodes, setVisibleNodes, onNodesChange] = useNodesState<FlowNode<CallchainGraphNodeDataWithControls>>([]);
-  const visibleNodesRef = useRef<Array<FlowNode<CallchainGraphNodeDataWithControls>>>([]);
   const reactFlowRef = useRef<ReactFlowInstance<FlowNode<CallchainGraphNodeDataWithControls>, FlowEdge<CallchainGraphEdgeData>> | null>(null);
   const expandedGraph = className?.includes('callchain-graph-expanded') ?? false;
   const fitViewPadding = expandedGraph ? 0.12 : 0.18;
   const minZoom = expandedGraph ? 0.72 : 0.28;
   const collapsibleIDs = useMemo(() => new Set(model.edges.map((edge) => edge.source)), [model.edges]);
+  const modelTopologyKey = useMemo(() => graphTopologyKey(model), [model]);
   const visibleModel = useMemo(() => collapseGraph(model, collapsedIDs), [model, collapsedIDs]);
   const toggleCollapse = useCallback((nodeID: string) => {
     setCollapsedIDs((current) => {
@@ -59,67 +59,37 @@ export function CallchainGraph({ model, className, onSelectFunction }: Callchain
       return next;
     });
   }, []);
-  const startManualDrag = useCallback((nodeID: string, clientX: number, clientY: number) => {
-    const instance = reactFlowRef.current;
-    const node = visibleNodesRef.current.find((item) => item.id === nodeID);
-    if (!instance || !node) {
-      return;
-    }
-    const pointerStart = instance.screenToFlowPosition({ x: clientX, y: clientY });
-    const positionStart = node.position;
-    const onMouseMove = (event: MouseEvent) => {
-      const pointer = instance.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      setVisibleNodes((current) =>
-        current.map((item) =>
-          item.id === nodeID
-            ? {
-                ...item,
-                position: {
-                  x: positionStart.x + pointer.x - pointerStart.x,
-                  y: positionStart.y + pointer.y - pointerStart.y,
-                },
-              }
-            : item,
-        ),
-      );
-    };
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-  }, [setVisibleNodes]);
   const { nodes: layoutNodes, edges } = useMemo(
-    () => layoutGraph(visibleModel, collapsedIDs, collapsibleIDs, toggleCollapse, startManualDrag),
-    [collapsedIDs, collapsibleIDs, startManualDrag, toggleCollapse, visibleModel],
+    () => layoutGraph(visibleModel, collapsedIDs, collapsibleIDs, toggleCollapse, onSelectFunction),
+    [collapsedIDs, collapsibleIDs, onSelectFunction, toggleCollapse, visibleModel],
   );
-  const fitViewKey = useMemo(
-    () => `${layoutNodes.map((node) => `${node.id}:${Math.round(node.position.x)}:${Math.round(node.position.y)}`).join('|')}#${edges.map((edge) => edge.id).join('|')}`,
-    [edges, layoutNodes],
-  );
+  const visibleTopologyKey = useMemo(() => graphTopologyKey(visibleModel), [visibleModel]);
+  const lastVisibleTopologyKeyRef = useRef<string | null>(null);
   const resetLayout = useCallback(() => {
     setVisibleNodes(layoutNodes);
+    lastVisibleTopologyKeyRef.current = visibleTopologyKey;
     window.setTimeout(() => {
       void reactFlowRef.current?.fitView({ padding: fitViewPadding, duration: 180 });
     }, 0);
-  }, [fitViewPadding, layoutNodes]);
+  }, [fitViewPadding, layoutNodes, visibleTopologyKey]);
 
   useEffect(() => {
     setCollapsedIDs(new Set());
-  }, [model]);
+  }, [modelTopologyKey]);
 
   useEffect(() => {
-    visibleNodesRef.current = visibleNodes;
-  }, [visibleNodes]);
-
-  useEffect(() => {
+    const topologyChanged = lastVisibleTopologyKeyRef.current !== visibleTopologyKey;
+    lastVisibleTopologyKeyRef.current = visibleTopologyKey;
+    if (!topologyChanged) {
+      setVisibleNodes((current) => mergeFlowNodes(current, layoutNodes));
+      return undefined;
+    }
     setVisibleNodes(layoutNodes);
     const timer = window.setTimeout(() => {
       void reactFlowRef.current?.fitView({ padding: fitViewPadding, duration: 180 });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [fitViewKey, fitViewPadding, layoutNodes]);
+  }, [fitViewPadding, layoutNodes, setVisibleNodes, visibleTopologyKey]);
 
   if (layoutNodes.length === 0) {
     return <div className="graph-empty">No callchain selected</div>;
@@ -145,7 +115,6 @@ export function CallchainGraph({ model, className, onSelectFunction }: Callchain
         nodesConnectable={false}
         nodeTypes={nodeTypes}
         elementsSelectable
-        onNodeClick={(_, node) => onSelectFunction?.(node.id)}
       >
         <Background gap={18} size={1} />
         <Controls showInteractive={false} />
@@ -160,7 +129,7 @@ function layoutGraph(
   collapsedIDs: Set<string>,
   collapsibleIDs: Set<string>,
   onToggleCollapse: (nodeID: string) => void,
-  onManualDragStart: (nodeID: string, clientX: number, clientY: number) => void,
+  onSelectFunction?: (functionID: string) => void,
 ): {
   nodes: Array<FlowNode<CallchainGraphNodeDataWithControls>>;
   edges: Array<FlowEdge<CallchainGraphEdgeData>>;
@@ -194,7 +163,7 @@ function layoutGraph(
           collapsed: collapsedIDs.has(node.id),
           collapsible: collapsibleIDs.has(node.id),
           onToggleCollapse,
-          onManualDragStart,
+          onSelectFunction,
         },
         className: `call-node call-node-${node.kind}${node.selected ? ' call-node-selected' : ''}`,
       };
@@ -224,32 +193,70 @@ function layoutGraph(
   };
 }
 
+function graphTopologyKey(model: CallchainGraphModel) {
+  const nodeIDs = model.nodes.map((node) => node.id).sort();
+  const edgeIDs = model.edges.map((edge) => `${edge.id}:${edge.source}->${edge.target}`).sort();
+  return `${nodeIDs.join('|')}#${edgeIDs.join('|')}`;
+}
+
+function mergeFlowNodes(
+  current: Array<FlowNode<CallchainGraphNodeDataWithControls>>,
+  next: Array<FlowNode<CallchainGraphNodeDataWithControls>>,
+) {
+  if (current.length !== next.length) {
+    return next;
+  }
+  const nextByID = new Map(next.map((node) => [node.id, node]));
+  if (current.some((node) => !nextByID.has(node.id))) {
+    return next;
+  }
+  return current.map((node) => {
+    const nextNode = nextByID.get(node.id);
+    if (!nextNode) {
+      return node;
+    }
+    return {
+      ...node,
+      data: nextNode.data,
+      className: nextNode.className,
+      sourcePosition: nextNode.sourcePosition,
+      targetPosition: nextNode.targetPosition,
+      type: nextNode.type,
+    };
+  });
+}
+
 function GraphNode({ data }: NodeProps<CallchainFlowNode>) {
   const canToggle = Boolean(data.collapsible);
   const display = nodeDisplay(data.id, data.label, data.file, data.line);
-  const nodeRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const node = nodeRef.current;
-    if (!node) {
+  const pointerStartRef = useRef<{ x: number; y: number; pointerID: number } | null>(null);
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) {
+      pointerStartRef.current = null;
       return;
     }
-    const handleMouseDown = (event: MouseEvent) => {
-      if (event.button !== 0 || (event.target as HTMLElement).closest('button')) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      data.onManualDragStart?.(data.id, event.clientX, event.clientY);
-    };
-    node.addEventListener('mousedown', handleMouseDown);
-    return () => node.removeEventListener('mousedown', handleMouseDown);
-  }, [data]);
+    pointerStartRef.current = { x: event.clientX, y: event.clientY, pointerID: event.pointerId };
+  };
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current;
+    pointerStartRef.current = null;
+    if (!start || start.pointerID !== event.pointerId || (event.target as HTMLElement).closest('button')) {
+      return;
+    }
+    const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (moved <= 5) {
+      data.onSelectFunction?.(data.id);
+    }
+  };
 
   return (
     <div
-      ref={nodeRef}
       className="call-node-inner"
+      onPointerCancel={() => {
+        pointerStartRef.current = null;
+      }}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
       title={data.id}
     >
       <Handle className="call-node-handle" type="target" position={Position.Left} />
@@ -262,6 +269,9 @@ function GraphNode({ data }: NodeProps<CallchainFlowNode>) {
           aria-label={data.collapsed ? 'Expand node' : 'Collapse node'}
           className="call-node-toggle nodrag"
           disabled={!canToggle}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+          }}
           onClick={(event) => {
             event.stopPropagation();
             data.onToggleCollapse?.(data.id);

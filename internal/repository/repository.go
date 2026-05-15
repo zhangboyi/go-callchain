@@ -66,16 +66,17 @@ func (m *Manager) SaveRepository(req model.SaveRepositoryRequest) (model.Managed
 	name := strings.TrimSpace(req.Name)
 	url := normalizeGitURL(req.URL)
 	defaultRef := strings.TrimSpace(req.DefaultRef)
-	if name == "" {
-		return model.ManagedRepository{}, errors.New("repository name is required")
-	}
 	if url == "" {
 		return model.ManagedRepository{}, errors.New("repository url is required")
 	}
+	if name == "" {
+		name = repositoryNameFromURL(url)
+	}
+	if defaultRef == "" {
+		defaultRef = "master"
+	}
 	id := strings.TrimSpace(req.ID)
-	if id == "" {
-		id = hashString("repo|" + url)[:16]
-	} else if !validRepositoryID(id) {
+	if id != "" && !validRepositoryID(id) {
 		return model.ManagedRepository{}, fmt.Errorf("invalid repository id: %s", id)
 	}
 
@@ -84,6 +85,9 @@ func (m *Manager) SaveRepository(req model.SaveRepositoryRequest) (model.Managed
 	catalog, err := m.readCatalog()
 	if err != nil {
 		return model.ManagedRepository{}, err
+	}
+	if id == "" {
+		id = nextRepositoryID(catalog.Repositories, url)
 	}
 	next := model.ManagedRepository{
 		ID:         id,
@@ -538,6 +542,36 @@ func sortRepositories(repos []model.ManagedRepository) {
 		}
 		return repos[i].URL < repos[j].URL
 	})
+}
+
+func nextRepositoryID(repos []model.ManagedRepository, url string) string {
+	existing := make(map[string]struct{}, len(repos))
+	for _, repo := range repos {
+		existing[repo.ID] = struct{}{}
+	}
+	for i := 0; ; i++ {
+		id := hashString(fmt.Sprintf("repo|%s|%d|%d", url, time.Now().UnixNano(), i))[:16]
+		if _, ok := existing[id]; !ok {
+			return id
+		}
+	}
+}
+
+func repositoryNameFromURL(url string) string {
+	value := strings.TrimRight(strings.TrimSpace(url), "/")
+	if value == "" {
+		return ""
+	}
+	if strings.HasSuffix(value, ".git") {
+		value = strings.TrimSuffix(value, ".git")
+	}
+	if index := strings.LastIndex(value, "/"); index >= 0 {
+		value = value[index+1:]
+	}
+	if index := strings.LastIndex(value, ":"); index >= 0 {
+		value = value[index+1:]
+	}
+	return strings.TrimSpace(value)
 }
 
 func validRepositoryID(id string) bool {

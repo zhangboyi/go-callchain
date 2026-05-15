@@ -12,6 +12,7 @@ import (
 	"go/types"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -37,6 +38,7 @@ const (
 	sourceConstructorVar   = "constructor_variable"
 	sourcePackageVar       = "package_variable"
 	sourceStructField      = "struct_field_constructor_inference"
+	sourceInterfaceMethod  = "interface_method_inference"
 	sourceSSACallGraph     = "ssa_callgraph"
 	confidenceExact        = "exact"
 	confidenceInferred     = "inferred"
@@ -923,31 +925,40 @@ func (s *analysisState) collectEdges() {
 				s.readAssignments(fn.file, typed, localTypes, groupPrefixes)
 			case *ast.CallExpr:
 				callee, source, confidence := s.resolveCall(fn, typed.Fun, localTypes)
-				if callee == "" || callee == fn.id {
-					return true
-				}
-				if _, ok := s.functionsByID[callee]; !ok {
-					return true
-				}
 				pos := s.fset.Position(typed.Pos())
-				s.addEdge(model.Edge{
-					Caller:     fn.id,
-					Callee:     callee,
-					File:       fn.file.relPath,
-					Line:       pos.Line,
-					Source:     source,
-					Confidence: confidence,
-				})
+				s.addFunctionEdge(fn, callee, source, confidence, fn.file.relPath, pos.Line)
+				for _, arg := range typed.Args {
+					callee, source, confidence := s.resolveMethodValueArgument(fn, arg, localTypes)
+					s.addFunctionEdge(fn, callee, source, confidence, fn.file.relPath, pos.Line)
+				}
 			}
 			return true
 		})
 	}
 }
 
+func (s *analysisState) addFunctionEdge(fn *functionInfo, callee string, source string, confidence string, file string, line int) {
+	if callee == "" || callee == fn.id {
+		return
+	}
+	if _, ok := s.functionsByID[callee]; !ok {
+		return
+	}
+	s.addEdge(model.Edge{
+		Caller:     fn.id,
+		Callee:     callee,
+		File:       file,
+		Line:       line,
+		Source:     source,
+		Confidence: confidence,
+	})
+}
+
 func (s *analysisState) enrichWithSSACallGraph(ctx context.Context, result *model.AnalysisResult) error {
 	cfg := &packages.Config{
 		Context: ctx,
 		Dir:     s.repoPath,
+		Env:     goCommandEnv(),
 		Fset:    s.fset,
 		Mode: packages.NeedName |
 			packages.NeedFiles |
@@ -1053,6 +1064,47 @@ func namedTypeName(typ types.Type) string {
 	}
 }
 
+func goCommandEnv() []string {
+	if _, err := exec.LookPath("go"); err == nil {
+		return os.Environ()
+	}
+	pathValue := os.Getenv("PATH")
+	for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/go/bin", "/usr/local/bin"} {
+		if _, err := os.Stat(filepath.Join(dir, "go")); err == nil && !pathContains(pathValue, dir) {
+			if pathValue == "" {
+				pathValue = dir
+			} else {
+				pathValue = dir + string(os.PathListSeparator) + pathValue
+			}
+		}
+	}
+	_ = os.Setenv("PATH", pathValue)
+	env := os.Environ()
+	next := make([]string, 0, len(env)+1)
+	found := false
+	for _, item := range env {
+		if strings.HasPrefix(item, "PATH=") {
+			next = append(next, "PATH="+pathValue)
+			found = true
+			continue
+		}
+		next = append(next, item)
+	}
+	if !found {
+		next = append(next, "PATH="+pathValue)
+	}
+	return next
+}
+
+func pathContains(pathValue string, dir string) bool {
+	for _, item := range filepath.SplitList(pathValue) {
+		if item == dir {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizedRepoFile(repoPath string, filename string) string {
 	rel, err := filepath.Rel(repoPath, filename)
 	if err != nil || strings.HasPrefix(rel, "..") {
@@ -1078,7 +1130,14 @@ func (s *analysisState) resolveCall(fn *functionInfo, fun ast.Expr, localTypes m
 			} else if ref.fromPackageVar {
 				source = sourcePackageVar
 			}
-			return functionID(ref.typ.importPath, ref.typ.name, typed.Sel.Name), source, confidence
+			id := functionID(ref.typ.importPath, ref.typ.name, typed.Sel.Name)
+			if _, ok := s.functionsByID[id]; ok {
+				return id, source, confidence
+			}
+			if implID, ok := s.inferredInterfaceMethodImplementation(ref.typ, typed.Sel.Name); ok {
+				return implID, sourceInterfaceMethod, confidenceInferred
+			}
+			return id, source, confidence
 		}
 		if ident, ok := typed.X.(*ast.Ident); ok {
 			if importPath, ok := fn.file.imports[ident.Name]; ok {
@@ -1087,6 +1146,57 @@ func (s *analysisState) resolveCall(fn *functionInfo, fun ast.Expr, localTypes m
 		}
 	}
 	return "", "", ""
+}
+
+func (s *analysisState) resolveMethodValueArgument(fn *functionInfo, expr ast.Expr, localTypes map[string]typeRef) (string, string, string) {
+	switch typed := expr.(type) {
+	case *ast.SelectorExpr:
+		return s.resolveCall(fn, typed, localTypes)
+	case *ast.ParenExpr:
+		return s.resolveMethodValueArgument(fn, typed.X, localTypes)
+	}
+	return "", "", ""
+}
+
+func (s *analysisState) inferredInterfaceMethodImplementation(ref typeRef, method string) (string, bool) {
+	var candidates []*functionInfo
+	for _, fn := range s.functionsByName {
+		if fn.importPath != ref.importPath || fn.name != method || !fn.receiverType.valid() || fn.receiverType.name == ref.name {
+			continue
+		}
+		candidates = append(candidates, fn)
+	}
+	if len(candidates) == 0 {
+		return "", false
+	}
+	if exact, ok := singleMatchingImplementation(candidates, func(name string) bool {
+		return name == ref.name+"Impl"
+	}); ok {
+		return exact.id, true
+	}
+	if suffix, ok := singleMatchingImplementation(candidates, func(name string) bool {
+		return strings.HasSuffix(name, "Impl")
+	}); ok {
+		return suffix.id, true
+	}
+	if len(candidates) == 1 {
+		return candidates[0].id, true
+	}
+	return "", false
+}
+
+func singleMatchingImplementation(candidates []*functionInfo, match func(string) bool) (*functionInfo, bool) {
+	var selected *functionInfo
+	for _, fn := range candidates {
+		if !match(fn.receiverType.name) {
+			continue
+		}
+		if selected != nil {
+			return nil, false
+		}
+		selected = fn
+	}
+	return selected, selected != nil
 }
 
 type receiverResolution struct {

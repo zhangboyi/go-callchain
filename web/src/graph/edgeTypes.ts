@@ -8,6 +8,7 @@ export type EdgeSourceType =
   | 'constructor_variable'
   | 'package_variable'
   | 'struct_field_constructor_inference'
+  | 'interface_method_inference'
   | 'ssa_callgraph'
   | 'swagger_router_comment'
   | 'xproto_route_metadata'
@@ -34,6 +35,7 @@ export const edgeTypeCatalog: EdgeTypeMeta[] = [
   { type: 'package_variable', label: 'Package Variable', description: 'Method call on a package-level variable', group: 'core' },
   { type: 'package_selector', label: 'Package Selector', description: 'Package function call such as common.GenResp()', group: 'utility' },
   { type: 'struct_field_constructor_inference', label: 'Struct Field', description: 'Call inferred through struct field constructor bindings', group: 'inferred' },
+  { type: 'interface_method_inference', label: 'Interface Method', description: 'Method value passed to a wrapper function and inferred to its implementation', group: 'inferred' },
   { type: 'ssa_callgraph', label: 'SSA Callgraph', description: 'Accurate mode edge from Go SSA call graph', group: 'inferred' },
 ];
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCallchainGraph, chainToCallTree, classifyNode } from './callchainGraph';
+import { buildCallchainGraph, chainsToCallTree, chainToCallTree, classifyNode } from './callchainGraph';
 import type { FunctionDetail, ImpactedInterface } from '../types';
 
 describe('callchain graph conversion', () => {
@@ -132,6 +132,28 @@ describe('callchain graph conversion', () => {
               function: 'dao.C',
               children: [],
             },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('merges impact chains for the same route into one tree', () => {
+    expect(
+      chainsToCallTree([
+        ['handler.A'],
+        ['handler.A', 'service.B'],
+        ['handler.A', 'service.B', 'dao.C'],
+        ['handler.A', 'service.B', 'dao.D'],
+      ]),
+    ).toEqual({
+      function: 'handler.A',
+      children: [
+        {
+          function: 'service.B',
+          children: [
+            { function: 'dao.C', children: [] },
+            { function: 'dao.D', children: [] },
           ],
         },
       ],

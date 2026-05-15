@@ -12,7 +12,7 @@ export function DocsPage() {
             Go Callchain Service 提供 Web 控制台和 VSCode 插件两种入口：Web 适合集中分析与可视化，VSCode 插件适合在代码编辑上下文里快速查看链路。
           </Typography.Paragraph>
         </div>
-        <Button type="primary" size="large" icon={<DownloadOutlined />} href={vscodeExtensionDownloadURL} download>
+        <Button type="primary" size="large" icon={<DownloadOutlined />} href={vscodeExtensionDownloadURL}>
           下载 VSCode 插件
         </Button>
       </div>
@@ -45,7 +45,7 @@ export function DocsPage() {
         <div>
           <Typography.Title level={4}>插件下载与安装</Typography.Title>
           <Typography.Paragraph>
-            下载链接由当前服务返回本地最新可用的 VSIX 包；部署环境也可以通过 <Typography.Text code>GO_CALLCHAIN_VSIX_PATH</Typography.Text> 指定固定文件。
+            下载链接指向当前发布的 VSIX artifact。
           </Typography.Paragraph>
           <Typography.Link href={vscodeExtensionDownloadURL}>
             <LinkOutlined /> {vscodeExtensionDownloadURL}

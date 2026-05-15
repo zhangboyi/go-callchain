@@ -63,11 +63,10 @@ export function CallchainPanel({
         route: selectedRoute,
         selectedFunction,
         functions,
-        functionDetail: filteredFunctionDetail,
         impactedInterface,
         changedFunctionIDs,
       }),
-    [changedFunctionIDs, filteredFunctionDetail, filteredTree, functions, impactedInterface, selectedFunction, selectedRoute],
+    [changedFunctionIDs, filteredTree, functions, impactedInterface, selectedFunction, selectedRoute],
   );
 
   const treeData = filteredTree ? [toTreeNode(filteredTree)] : [];
@@ -112,6 +111,7 @@ export function CallchainPanel({
         title="Call Chain Graph"
         width="calc(100vw - 48px)"
         open={graphOpen}
+        zIndex={1200}
         onClose={() => setGraphOpen(false)}
         destroyOnClose
       >
