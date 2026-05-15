@@ -25,6 +25,7 @@ pnpm-debug.log*
 bin/
 build/
 dist/
+release/
 coverage/
 *.cover
 *.coverage

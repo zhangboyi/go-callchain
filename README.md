@@ -52,6 +52,37 @@ testdata                   # 分析器测试仓库
 
 ## 本地启动
 
+一键部署并启动 Web 服务：
+
+```bash
+cd ./go-callchain-service
+./scripts/deploy-web.sh
+```
+
+脚本会自动识别当前系统和 CPU 架构，例如 macOS Apple Silicon 会自动按 `darwin/arm64` 构建，Linux x86_64 会自动按 `linux/amd64` 构建。
+
+只构建发布目录，不启动服务：
+
+```bash
+./scripts/deploy-web.sh --no-run
+```
+
+指定监听地址：
+
+```bash
+./scripts/deploy-web.sh --addr 0.0.0.0:8787
+```
+
+给其他系统构建发布包时再显式指定目标平台：
+
+```bash
+./scripts/deploy-web.sh --target linux-amd64 --no-run
+./scripts/deploy-web.sh --target linux-arm64 --no-run
+./scripts/deploy-web.sh --target darwin-arm64 --no-run
+```
+
+手动启动流程：
+
 ```bash
 cd /Users/boyi.zhang/Work/ai/go-callchain-service
 npm --prefix web ci
@@ -372,6 +403,31 @@ vscode-extension/bin/darwin-arm64/go-callchain-service
 ```
 
 ## 二进制部署
+
+推荐使用脚本生成发布目录：
+
+```bash
+cd /Users/boyi.zhang/Work/ai/go-callchain-service
+./scripts/deploy-web.sh --no-run
+```
+
+跨平台构建：
+
+```bash
+./scripts/deploy-web.sh --target linux-amd64 --no-run
+./scripts/deploy-web.sh --target linux-arm64 --no-run
+./scripts/deploy-web.sh --target darwin-arm64 --no-run
+```
+
+未指定 `--target` 时，脚本自动识别当前系统并构建可直接运行的二进制。指定 `--target` 时，默认输出目录会带平台后缀：
+
+```text
+release/go-callchain-service-linux-amd64
+release/go-callchain-service-linux-arm64
+release/go-callchain-service-darwin-arm64
+```
+
+手动构建：
 
 ```bash
 cd /Users/boyi.zhang/Work/ai/go-callchain-service
