@@ -52,33 +52,48 @@ testdata                   # 分析器测试仓库
 
 ## 本地启动
 
-一键部署并启动 Web 服务：
+一键部署并后台启动 Web 服务：
 
 ```bash
 cd ./go-callchain-service
 ./scripts/deploy-web.sh
 ```
 
-脚本会自动识别当前系统和 CPU 架构，例如 macOS Apple Silicon 会自动按 `darwin/arm64` 构建，Linux x86_64 会自动按 `linux/amd64` 构建。
+脚本默认监听 `0.0.0.0:8787`，会输出 `127.0.0.1` 和本机 IP 访问地址。脚本会自动识别当前系统和 CPU 架构，例如 macOS Apple Silicon 会自动按 `darwin/arm64` 构建，Linux x86_64 会自动按 `linux/amd64` 构建。
 
 只构建发布目录，不启动服务：
 
 ```bash
-./scripts/deploy-web.sh --no-run
+./scripts/deploy-web.sh build
 ```
 
-指定监听地址：
+指定监听 host/port：
 
 ```bash
-./scripts/deploy-web.sh --addr 0.0.0.0:8787
+./scripts/deploy-web.sh start --host 0.0.0.0 --port 8787
+./scripts/deploy-web.sh start --addr 0.0.0.0:8787
+```
+
+后台服务管理：
+
+```bash
+./scripts/deploy-web.sh status
+./scripts/deploy-web.sh restart
+./scripts/deploy-web.sh stop
+```
+
+查看日志：
+
+```bash
+tail -f release/go-callchain-service/go-callchain-service.log
 ```
 
 给其他系统构建发布包时再显式指定目标平台：
 
 ```bash
-./scripts/deploy-web.sh --target linux-amd64 --no-run
-./scripts/deploy-web.sh --target linux-arm64 --no-run
-./scripts/deploy-web.sh --target darwin-arm64 --no-run
+./scripts/deploy-web.sh build --target linux-amd64
+./scripts/deploy-web.sh build --target linux-arm64
+./scripts/deploy-web.sh build --target darwin-arm64
 ```
 
 手动启动流程：
@@ -408,15 +423,15 @@ vscode-extension/bin/darwin-arm64/go-callchain-service
 
 ```bash
 cd /Users/boyi.zhang/Work/ai/go-callchain-service
-./scripts/deploy-web.sh --no-run
+./scripts/deploy-web.sh build
 ```
 
 跨平台构建：
 
 ```bash
-./scripts/deploy-web.sh --target linux-amd64 --no-run
-./scripts/deploy-web.sh --target linux-arm64 --no-run
-./scripts/deploy-web.sh --target darwin-arm64 --no-run
+./scripts/deploy-web.sh build --target linux-amd64
+./scripts/deploy-web.sh build --target linux-arm64
+./scripts/deploy-web.sh build --target darwin-arm64
 ```
 
 未指定 `--target` 时，脚本自动识别当前系统并构建可直接运行的二进制。指定 `--target` 时，默认输出目录会带平台后缀：
